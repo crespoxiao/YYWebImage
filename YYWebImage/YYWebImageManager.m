@@ -67,7 +67,7 @@ static UIApplication *_YYSharedApplication() {
     if (!self) return nil;
     _cache = cache;
     _queue = queue;
-    _timeout = 15.0;
+    _timeout = 10.0;
     if (YYImageWebPAvailable()) {
         _headers = @{ @"Accept" : @"image/webp,image/*;q=0.8" };
     } else {
