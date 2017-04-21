@@ -290,37 +290,37 @@ typedef NSURLSessionAuthChallengeDisposition (^YYURLSessionDidReceiveAuthenticat
 }
 
 - (void)dealloc {
-    [_lock lock];
+    [self.lock lock];
     if (_taskID != UIBackgroundTaskInvalid) {
-        [_YYSharedApplication() endBackgroundTask:_taskID];
-        _taskID = UIBackgroundTaskInvalid;
+        [_YYSharedApplication() endBackgroundTask:self.taskID];
+        self.taskID = UIBackgroundTaskInvalid;
     }
     if ([self isExecuting]) {
         self.cancelled = YES;
         self.finished = YES;
         //替换
-        if (_task) {
-            [_task cancel];
-            if (![_request.URL isFileURL] && (_options & YYWebImageOptionShowNetworkActivity)) {
+        if (self.task) {
+            [self.task cancel];
+            if (![self.request.URL isFileURL] && (self.options & YYWebImageOptionShowNetworkActivity)) {
                 [YYWebImageManager decrementNetworkActivityCount];
             }
         }
-        if (_completion) {
+        if (self.completion) {
             @autoreleasepool {
-                _completion(nil, _request.URL, YYWebImageFromNone, YYWebImageStageCancelled, nil);
+                self.completion(nil, self.request.URL, YYWebImageFromNone, YYWebImageStageCancelled, nil);
             }
         }
     }
-    [_lock unlock];
+    [self.lock unlock];
 }
 
 - (void)_endBackgroundTask {
-    [_lock lock];
-    if (_taskID != UIBackgroundTaskInvalid) {
-        [_YYSharedApplication() endBackgroundTask:_taskID];
-        _taskID = UIBackgroundTaskInvalid;
+    [self.lock lock];
+    if (self.taskID != UIBackgroundTaskInvalid) {
+        [_YYSharedApplication() endBackgroundTask:self.taskID];
+        self.taskID = UIBackgroundTaskInvalid;
     }
-    [_lock unlock];
+    [self.lock unlock];
 }
 
 #pragma mark - Runs in operation thread
@@ -628,8 +628,7 @@ willPerformHTTPRedirection:(NSHTTPURLResponse *)response
         completionHandler(redirectRequest);
     }
 }
-- (void)URLSession:(NSURLSession *)session dataTask:(NSURLSessionDataTask *)dataTask
-    didReceiveData:(NSData *)data{
+- (void)URLSession:(NSURLSession *)session dataTask:(NSURLSessionDataTask *)dataTask didReceiveData:(nonnull NSData *)data {
     [_lock lock];
     BOOL canceled = [self isCancelled];
     [_lock unlock];
@@ -756,35 +755,42 @@ willPerformHTTPRedirection:(NSHTTPURLResponse *)response
 - (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task
 didReceiveChallenge:(NSURLAuthenticationChallenge *)challenge
  completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition disposition, NSURLCredential * _Nullable credential))completionHandler{
-    //挑战处理类型为 默认
-    /*
-     NSURLSessionAuthChallengePerformDefaultHandling：默认方式处理
-     NSURLSessionAuthChallengeUseCredential：使用指定的证书
-     NSURLSessionAuthChallengeCancelAuthenticationChallenge：取消挑战
+    /**
+     挑战认证的处理方式（枚举类型有三种）
+     NSURLSessionAuthChallengeUseCredential  采用指定的证书（证书可能为nil）
+     NSURLSessionAuthChallengePerformDefaultHandling  采用默认的处理方式 （似乎这个代理没有被实现，证书参数被忽视（即，没有证书））
+     NSURLSessionAuthChallengeCancelAuthenticationChallenge 取消挑战认证，cancel 掉所有的请求，所以 freeze ？
+     NSURLSessionAuthChallengeRejectProtectionSpace 这一次的挑战被拒绝，下一次在进行尝试，忽略这一次的证书
      */
-    // sessionDidReceiveAuthenticationChallenge是自定义方法，用来如何应对服务器端的认证挑战
+    
     NSURLSessionAuthChallengeDisposition disposition = NSURLSessionAuthChallengePerformDefaultHandling;
     __block NSURLCredential * creadential = nil;
-    //如果 是YYWebImageOptionAllowInvalidSSLCertificates 则不进行证书认证 就进入else块，如果需要认证 则进入if块
-    if (!(_options & YYWebImageOptionAllowInvalidSSLCertificates)) {
-        if ([challenge.protectionSpace.authenticationMethod isEqualToString:NSURLAuthenticationMethodServerTrust]) {
-            //            creadential = [NSURLCredential credentialForTrust:challenge.protectionSpace.serverTrust];
-            creadential = self.credential;
-            if (creadential) {
-                disposition = NSURLSessionAuthChallengeUseCredential;
+    
+    if (self.sessionDidReceiveAuthenticationChallenge) {
+        disposition = self.sessionDidReceiveAuthenticationChallenge(session, challenge, &creadential);
+    } else {
+        if (!(_options & YYWebImageOptionAllowInvalidSSLCertificates)) {
+            if ([challenge.protectionSpace.authenticationMethod isEqualToString:NSURLAuthenticationMethodServerTrust]) {
+                //            creadential = [NSURLCredential credentialForTrust:challenge.protectionSpace.serverTrust];
+                creadential = self.credential;
+                if (creadential) {
+                    disposition = NSURLSessionAuthChallengeUseCredential;
+                }else{
+                    disposition = NSURLSessionAuthChallengePerformDefaultHandling;
+                }
             }else{
-                disposition = NSURLSessionAuthChallengePerformDefaultHandling;
+                //disposition = NSURLSessionAuthChallengeCancelAuthenticationChallenge;
             }
         }else{
-            disposition = NSURLSessionAuthChallengeCancelAuthenticationChallenge;
+            //disposition = NSURLSessionAuthChallengeCancelAuthenticationChallenge;
         }
-    }else{
-        disposition = NSURLSessionAuthChallengeCancelAuthenticationChallenge;
     }
+    
     if (completionHandler) {
         completionHandler(disposition,creadential);
     }
 }
+
 - (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task didCompleteWithError:(nullable NSError *)error {
     @autoreleasepool {
         [_lock lock];
@@ -852,9 +858,10 @@ didReceiveChallenge:(NSURLAuthenticationChallenge *)challenge
         [_lock unlock];
     }
 }
+
 - (void)URLSession:(NSURLSession *)session dataTask:(NSURLSessionDataTask *)dataTask
 didReceiveResponse:(NSURLResponse *)response
- completionHandler:(void (^)(NSURLSessionResponseDisposition disposition))completionHandler{
+ completionHandler:(void (^)(NSURLSessionResponseDisposition disposition))completionHandler {
     NSError *error = nil;
     if ([response isKindOfClass:[NSHTTPURLResponse class]]) {
         NSHTTPURLResponse *httpResponse = (id) response;
@@ -878,21 +885,18 @@ didReceiveResponse:(NSURLResponse *)response
             [_lock unlock];
         }
     }
-  
+    
     NSURLSessionResponseDisposition disposition = NSURLSessionResponseAllow;
     if (completionHandler) {
         completionHandler(disposition);
     }
 }
 
-- (void)URLSession:(NSURLSession *)session dataTask:(NSURLSessionDataTask *)dataTask
-didBecomeDownloadTask:(NSURLSessionDownloadTask *)downloadTask{
+- (void)URLSession:(NSURLSession *)session downloadTask:(NSURLSessionDownloadTask *)downloadTask
+      didWriteData:(int64_t)bytesWritten
+ totalBytesWritten:(int64_t)totalBytesWritten
+totalBytesExpectedToWrite:(int64_t)totalBytesExpectedToWrite {
     
-}
-
--(void)URLSession:(NSURLSession *)session downloadTask:(NSURLSessionDownloadTask *)downloadTask
-     didWriteData:(int64_t)bytesWritten totalBytesWritten:(int64_t)totalBytesWritten
-totalBytesExpectedToWrite:(int64_t)totalBytesExpectedToWrite{
     [_lock lock];
     BOOL canceled = [self isCancelled];
     [_lock unlock];
