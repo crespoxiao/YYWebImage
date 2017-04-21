@@ -422,11 +422,12 @@ static void URLInBlackListAdd(NSURL *url) {
             if (_cache) {
                 if (image || (_options & YYWebImageOptionRefreshImageCache)) {
                     NSData *data = _data;
+                    __weak typeof(self) _self = self;
                     dispatch_async([YYWebImageOperation _imageQueue], ^{
                         //[_cache setImage:image imageData:data forKey:_cacheKey withType:YYImageCacheTypeAll];
-                        
-                        YYImageCacheType cacheType = (_options & YYWebImageOptionIgnoreDiskCache) ? YYImageCacheTypeMemory : YYImageCacheTypeAll;
-                        [_cache setImage:image imageData:data forKey:_cacheKey withType:cacheType];
+                        __strong typeof(_self) self = _self;
+                        YYImageCacheType cacheType = (self->_options & YYWebImageOptionIgnoreDiskCache) ? YYImageCacheTypeMemory : YYImageCacheTypeAll;
+                        [self->_cache setImage:image imageData:data forKey:self->_cacheKey withType:cacheType];
                     });
                 }
             }

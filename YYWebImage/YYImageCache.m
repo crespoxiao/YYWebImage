@@ -209,7 +209,7 @@ static inline dispatch_queue_t YYImageCacheDecodeQueue() {
         UIImage *image = nil;
         
         if (type & YYImageCacheTypeMemory) {
-            image = [_memoryCache objectForKey:key];
+            image = [self->_memoryCache objectForKey:key];
             if (image) {
                 dispatch_async(dispatch_get_main_queue(), ^{
                     block(image, YYImageCacheTypeMemory);
@@ -219,10 +219,10 @@ static inline dispatch_queue_t YYImageCacheDecodeQueue() {
         }
         
         if (type & YYImageCacheTypeDisk) {
-            NSData *data = (id)[_diskCache objectForKey:key];
+            NSData *data = (id)[self->_diskCache objectForKey:key];
             image = [self imageFromData:data];
             if (image) {
-                [_memoryCache setObject:image forKey:key];
+                [self->_memoryCache setObject:image forKey:key];
                 dispatch_async(dispatch_get_main_queue(), ^{
                     block(image, YYImageCacheTypeDisk);
                 });
@@ -243,7 +243,7 @@ static inline dispatch_queue_t YYImageCacheDecodeQueue() {
 - (void)getImageDataForKey:(NSString *)key withBlock:(void (^)(NSData *imageData))block {
     if (!block) return;
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        NSData *data = (id)[_diskCache objectForKey:key];
+        NSData *data = (id)[self->_diskCache objectForKey:key];
         dispatch_async(dispatch_get_main_queue(), ^{
             block(data);
         });

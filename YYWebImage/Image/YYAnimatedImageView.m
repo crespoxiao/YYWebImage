@@ -120,11 +120,12 @@ typedef NS_ENUM(NSUInteger, YYAnimatedImageType) {
     YYAnimatedImageTypeHighlightedImages,
 };
 
+static dispatch_once_t onceToken;
+
 @interface YYAnimatedImageView() {
     @package
     UIImage <YYAnimatedImage> *_curAnimatedImage;
-    
-    dispatch_once_t _onceToken;
+
     dispatch_semaphore_t _lock; ///< lock for _buffer
     NSOperationQueue *_requestQueue; ///< image request queue, serial
     
@@ -231,16 +232,17 @@ typedef NS_ENUM(NSUInteger, YYAnimatedImageType) {
 
 // init the animated params.
 - (void)resetAnimated {
-    dispatch_once(&_onceToken, ^{
-        _lock = dispatch_semaphore_create(1);
-        _buffer = [NSMutableDictionary new];
-        _requestQueue = [[NSOperationQueue alloc] init];
-        _requestQueue.maxConcurrentOperationCount = 1;
-        _link = [CADisplayLink displayLinkWithTarget:[_YYImageWeakProxy proxyWithTarget:self] selector:@selector(step:)];
-        if (_runloopMode) {
-            [_link addToRunLoop:[NSRunLoop mainRunLoop] forMode:_runloopMode];
+    
+    dispatch_once(&onceToken, ^{
+        self->_lock = dispatch_semaphore_create(1);
+        self->_buffer = [NSMutableDictionary new];
+        self->_requestQueue = [[NSOperationQueue alloc] init];
+        self->_requestQueue.maxConcurrentOperationCount = 1;
+        self->_link = [CADisplayLink displayLinkWithTarget:[_YYImageWeakProxy proxyWithTarget:self] selector:@selector(step:)];
+        if (self->_runloopMode) {
+            [self->_link addToRunLoop:[NSRunLoop mainRunLoop] forMode:self->_runloopMode];
         }
-        _link.paused = YES;
+        self->_link.paused = YES;
         
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(didReceiveMemoryWarning:) name:UIApplicationDidReceiveMemoryWarningNotification object:nil];
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(didEnterBackground:) name:UIApplicationDidEnterBackgroundNotification object:nil];
@@ -431,14 +433,16 @@ typedef NS_ENUM(NSUInteger, YYAnimatedImageType) {
 
 - (void)didReceiveMemoryWarning:(NSNotification *)notification {
     [_requestQueue cancelAllOperations];
+    __weak typeof(self) _self = self;
     [_requestQueue addOperationWithBlock: ^{
-        _incrBufferCount = -60 - (int)(arc4random() % 120); // about 1~3 seconds to grow back..
-        NSNumber *next = @((_curIndex + 1) % _totalFrameCount);
+        __strong typeof(_self) self = _self;
+        self->_incrBufferCount = -60 - (int)(arc4random() % 120); // about 1~3 seconds to grow back..
+        NSNumber *next = @((self->_curIndex + 1) % self->_totalFrameCount);
         LOCK(
-             NSArray * keys = _buffer.allKeys;
+             NSArray * keys = self->_buffer.allKeys;
              for (NSNumber * key in keys) {
                  if (![key isEqualToNumber:next]) { // keep the next frame for smoothly animation
-                     [_buffer removeObjectForKey:key];
+                     [self->_buffer removeObjectForKey:key];
                  }
              }
         )//LOCK
@@ -578,20 +582,22 @@ typedef NS_ENUM(NSUInteger, YYAnimatedImageType) {
     if (currentAnimatedImageIndex >= _curAnimatedImage.animatedImageFrameCount) return;
     if (_curIndex == currentAnimatedImageIndex) return;
     
+    __weak typeof(self) _self = self;
     void (^block)() = ^{
+        __strong typeof(_self) self = _self;
         LOCK(
-             [_requestQueue cancelAllOperations];
-             [_buffer removeAllObjects];
+             [self->_requestQueue cancelAllOperations];
+             [self->_buffer removeAllObjects];
              [self willChangeValueForKey:@"currentAnimatedImageIndex"];
-             _curIndex = currentAnimatedImageIndex;
+             self->_curIndex = currentAnimatedImageIndex;
              [self didChangeValueForKey:@"currentAnimatedImageIndex"];
-             _curFrame = [_curAnimatedImage animatedImageFrameAtIndex:_curIndex];
-             if (_curImageHasContentsRect) {
-                 _curContentsRect = [_curAnimatedImage animatedImageContentsRectAtIndex:_curIndex];
+             self->_curFrame = [self->_curAnimatedImage animatedImageFrameAtIndex:self->_curIndex];
+             if (self->_curImageHasContentsRect) {
+                 self->_curContentsRect = [self->_curAnimatedImage animatedImageContentsRectAtIndex:self->_curIndex];
              }
-             _time = 0;
-             _loopEnd = NO;
-             _bufferMiss = NO;
+             self->_time = 0;
+             self->_loopEnd = NO;
+             self->_bufferMiss = NO;
              [self.layer setNeedsDisplay];
         )//LOCK
     };
