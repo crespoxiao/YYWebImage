@@ -10,6 +10,12 @@ YYWebImage
 ![ProgressiveBlur~](https://raw.github.com/ibireme/YYWebImage/master/Demo/Demo.gif
 )
 
+### 由于原作者养大病，估计不会再维护这个库，故 fork 了一份，改为用 NSURLSession 下载图片。--- CrespoXiao 
+
+
+
+
+
 YYWebImage is an asynchronous image loading framework (a component of [YYKit](https://github.com/ibireme/YYKit)).
 
 It was created as an improved replacement for SDWebImage, PINRemoteImage and FLAnimatedImage.
