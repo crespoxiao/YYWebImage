@@ -171,7 +171,7 @@ typedef NSURLSessionAuthChallengeDisposition (^YYURLSessionDidReceiveAuthenticat
 
 //替换属性
 @property (nonatomic, strong) NSURLSession * session;
-@property (nonatomic, strong) NSURLSessionTask * task;
+@property (atomic,    strong) NSURLSessionTask * task;
 @property (readwrite, nonatomic, copy) YYURLSessionDidReceiveAuthenticationChallengeBlock sessionDidReceiveAuthenticationChallenge;
 
 @property (nonatomic, strong) NSMutableData *data;
@@ -188,6 +188,8 @@ typedef NSURLSessionAuthChallengeDisposition (^YYURLSessionDidReceiveAuthenticat
 @property (nonatomic, copy) YYWebImageProgressBlock progress;
 @property (nonatomic, copy) YYWebImageTransformBlock transform;
 @property (nonatomic, copy) YYWebImageCompletionBlock completion;
+
+@property (nonatomic, weak) NSRunLoop *networkThreadRunLoop;
 @end
 
 
@@ -281,46 +283,65 @@ typedef NSURLSessionAuthChallengeDisposition (^YYURLSessionDidReceiveAuthenticat
     _cancelled = NO;
     _taskID = UIBackgroundTaskInvalid;
     _lock = [NSRecursiveLock new];
-    NSOperationQueue * queue = [[NSOperationQueue alloc] init];
-    queue.maxConcurrentOperationCount = 1;
+    
+    //NSOperationQueue * queue = [[NSOperationQueue alloc] init];
+    //queue.maxConcurrentOperationCount = 1;
     //configuration还有很多配置  感兴趣的可以查看这篇文章https://objccn.io/issue-5-4/
     NSURLSessionConfiguration * config = [NSURLSessionConfiguration defaultSessionConfiguration];
-    _session = [NSURLSession sessionWithConfiguration:config delegate:self delegateQueue:queue];
+    config.timeoutIntervalForRequest = 15.0f;
+    _session = [NSURLSession sessionWithConfiguration:config
+                                             delegate:(id <NSURLSessionDelegate>)[_YYWebImageWeakProxy proxyWithTarget:self]
+                                        delegateQueue:nil];
     return self;
 }
 
 - (void)dealloc {
-    [self.lock lock];
+    [_lock lock];
     if (_taskID != UIBackgroundTaskInvalid) {
-        [_YYSharedApplication() endBackgroundTask:self.taskID];
-        self.taskID = UIBackgroundTaskInvalid;
+        [_YYSharedApplication() endBackgroundTask:_taskID];
+        _taskID = UIBackgroundTaskInvalid;
     }
+    
     if ([self isExecuting]) {
-        self.cancelled = YES;
-        self.finished = YES;
+        _cancelled = YES;
+        _finished = YES;
         //替换
         if (self.task) {
             [self.task cancel];
-            if (![self.request.URL isFileURL] && (self.options & YYWebImageOptionShowNetworkActivity)) {
+            if (![_request.URL isFileURL] && (_options & YYWebImageOptionShowNetworkActivity)) {
                 [YYWebImageManager decrementNetworkActivityCount];
             }
         }
-        if (self.completion) {
+        if (_completion) {
             @autoreleasepool {
-                self.completion(nil, self.request.URL, YYWebImageFromNone, YYWebImageStageCancelled, nil);
+                _completion(nil, _request.URL, YYWebImageFromNone, YYWebImageStageCancelled, nil);
             }
         }
     }
-    [self.lock unlock];
+    
+    if (_session) {
+        [_session invalidateAndCancel];
+        _session = nil;
+    }
+    
+    if (_networkThreadRunLoop) {
+        [_networkThreadRunLoop cancelPerformSelectorsWithTarget:self];
+    } else {
+        [[NSRunLoop currentRunLoop] cancelPerformSelectorsWithTarget:self];
+    }
+    
+    [_lock unlock];
 }
 
 - (void)_endBackgroundTask {
-    [self.lock lock];
-    if (self.taskID != UIBackgroundTaskInvalid) {
-        [_YYSharedApplication() endBackgroundTask:self.taskID];
-        self.taskID = UIBackgroundTaskInvalid;
+    if (_lock) {
+        [_lock lock];
+        if (_taskID != UIBackgroundTaskInvalid) {
+            [_YYSharedApplication() endBackgroundTask:_taskID];
+            _taskID = UIBackgroundTaskInvalid;
+        }
+        [_lock unlock];
     }
-    [self.lock unlock];
 }
 
 #pragma mark - Runs in operation thread
@@ -336,6 +357,11 @@ typedef NSURLSessionAuthChallengeDisposition (^YYURLSessionDidReceiveAuthenticat
 - (void)_startOperation {
     if ([self isCancelled]) return;
     @autoreleasepool {
+        
+        if (!_networkThreadRunLoop) {
+            _networkThreadRunLoop = [NSRunLoop currentRunLoop];
+        }
+        
         // get image from cache
         if (_cache &&
             !(_options & YYWebImageOptionUseNSURLCache) &&
@@ -402,10 +428,10 @@ typedef NSURLSessionAuthChallengeDisposition (^YYURLSessionDidReceiveAuthenticat
         [_lock lock];
         if (![self isCancelled]) {
             //替换
-            if (!_task) {
-                _task = [_session dataTaskWithRequest:_request];
+            if (!self.task) {
+                self.task = [_session dataTaskWithRequest:_request];
             }
-            [_task resume];
+            [self.task resume];
             //如果不是本地文件则进行请求
             if (![_request.URL isFileURL] && (_options & YYWebImageOptionShowNetworkActivity)) {
                 //这个是为了显示状态栏的小菊花
@@ -419,18 +445,26 @@ typedef NSURLSessionAuthChallengeDisposition (^YYURLSessionDidReceiveAuthenticat
 // runs on network thread, called from outer "cancel"
 - (void)_cancelOperation {
     @autoreleasepool {
-        //替换
-        if (_task) {
-            if (![_request.URL isFileURL] && (_options & YYWebImageOptionShowNetworkActivity)) {
-                [YYWebImageManager decrementNetworkActivityCount];
+        __weak typeof(self) _self = self;
+        if (_self) {
+            
+            if (!_networkThreadRunLoop) {
+                _networkThreadRunLoop = [NSRunLoop currentRunLoop];
             }
+            
+            [_lock lock];
+            if (self.task) {
+                if (![_request.URL isFileURL] && (_options & YYWebImageOptionShowNetworkActivity)) {
+                    [YYWebImageManager decrementNetworkActivityCount];
+                }
+                [self.task cancel];
+                self.task = nil;
+            }
+            
+            if (_completion) _completion(nil, _request.URL, YYWebImageFromNone, YYWebImageStageCancelled, nil);
+            [self _endBackgroundTask];
+            [_lock unlock];
         }
-        [_task cancel];
-        _task = nil;
-        
-        
-        if (_completion) _completion(nil, _request.URL, YYWebImageFromNone, YYWebImageStageCancelled, nil);
-        [self _endBackgroundTask];
     }
 }
 
@@ -782,6 +816,10 @@ didReceiveChallenge:(NSURLAuthenticationChallenge *)challenge
                 //disposition = NSURLSessionAuthChallengeCancelAuthenticationChallenge;
             }
         }else{
+            creadential = [NSURLCredential credentialForTrust:challenge.protectionSpace.serverTrust];
+            if (creadential) {
+                disposition = NSURLSessionAuthChallengeUseCredential;
+            }
             //disposition = NSURLSessionAuthChallengeCancelAuthenticationChallenge;
         }
     }
@@ -794,7 +832,7 @@ didReceiveChallenge:(NSURLAuthenticationChallenge *)challenge
 - (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task didCompleteWithError:(nullable NSError *)error {
     @autoreleasepool {
         [_lock lock];
-        _task = nil;
+        self.task = nil;
         if (![self isCancelled]) {
             __weak typeof(self) _self = self;
             dispatch_async([self.class _imageQueue], ^{
@@ -871,8 +909,12 @@ didReceiveResponse:(NSURLResponse *)response
         }
     }
     if (error) {
-        [_task cancel];
-        [self URLSession:_session task:_task didCompleteWithError:error];
+        [_lock lock];
+        if (self.task) {
+            [self.task cancel];
+            [self URLSession:_session task:self.task didCompleteWithError:error];
+        }
+        [_lock unlock];
     } else {
         if (response.expectedContentLength) {
             _expectedSize = (NSInteger)response.expectedContentLength;

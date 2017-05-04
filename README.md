@@ -6,6 +6,11 @@ YYWebImage
 
 ### 由于原作者养大病，估计不会再维护这个库，故 fork 了一份，改为用 NSURLSession 下载图片。--- CrespoXiao 
 
+###install 
+
+	// by git address and tag
+	pod 'YYWebImage', :git => 'git@github.com:crespoxiao/YYWebImage.git', :tag => '1.0.6'
+	
 
 
 
